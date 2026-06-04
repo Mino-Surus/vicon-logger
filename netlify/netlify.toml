@@ -1,0 +1,7 @@
+[build]
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/tilda-webhook"
+  to = "/.netlify/functions/tilda-webhook"
+  status = 200
