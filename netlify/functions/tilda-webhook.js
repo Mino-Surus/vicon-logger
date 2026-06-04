@@ -1,38 +1,39 @@
 // netlify/functions/tilda-webhook.js
-// Функция для приёма данных из формы Tilda, добавления IP и записи в Google Sheets
+// Упрощённая версия — только логируем IP, без Google Sheets
 
-const { GoogleSpreadsheet } = require('google-spreadsheet');
-
-exports.handler = async (event, context) => {
-  // 1. Разбираем входящие данные от Tilda
-  let formData = {};
-  try {
-    // Tilda может отправлять данные в разных форматах
-    if (event.body) {
-      formData = JSON.parse(event.body);
-    }
-  } catch (e) {
-    // Если не JSON, пробуем как form-data
-    formData = event.body || {};
-  }
-
-  // 2. ПОЛУЧАЕМ IP-АДРЕС — это самое важное!
-  // Netlify автоматически подставляет IP клиента в заголовок x-nf-client-connection-ip[citation:5][citation:6]
+exports.handler = async (event) => {
+  // 1. Получаем IP-адрес (Netlify сам добавляет этот заголовок!)
   const userIP = event.headers['x-nf-client-connection-ip'] || 
                   event.headers['x-forwarded-for'] || 
                   'IP не найден';
 
-  // 3. Добавляем дату и время получения (Москва)
+  // 2. Разбираем данные формы
+  let formData = {};
+  if (event.body) {
+    try {
+      // Пробуем как JSON
+      formData = JSON.parse(event.body);
+    } catch(e) {
+      // Если не JSON — пробуем как form-urlencoded
+      const params = new URLSearchParams(event.body);
+      for (const [key, value] of params) {
+        formData[key] = value;
+      }
+    }
+  }
+
+  // 3. Получаем версию согласия
+  const version = formData.version || 'версия не указана';
+
+  // 4. Текущая дата и время (Москва)
   const now = new Date();
   const moscowTime = new Date(now.getTime() + 3 * 60 * 60 * 1000);
   const receivedAt = moscowTime.toISOString().slice(0, 19).replace('T', ' ');
 
-  // 4. Получаем версию согласия (из данных формы)
-  const version = formData.version || 'версия не указана';
-
-  // 5. Формируем запись для Google Sheets
-  const sheetRow = {
-    datetime: receivedAt,
+  // 5. Всё, что нужно залогировать
+  const logEntry = {
+    status: 'ok',
+    received_at: receivedAt,
     ip_address: userIP,
     version: version,
     email: formData.email || '',
@@ -40,51 +41,12 @@ exports.handler = async (event, context) => {
     phone: formData.phone || ''
   };
 
-  // 6. Отправляем в Google Sheets (если настроены переменные окружения)
-  if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && 
-      process.env.GOOGLE_PRIVATE_KEY && 
-      process.env.GOOGLE_SPREADSHEET_ID) {
-    try {
-      const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREADSHEET_ID);
-      await doc.useServiceAccountAuth({
-        client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
-      });
-      await doc.loadInfo();
-      const sheet = doc.sheetsByIndex[0];
-      await sheet.addRow(sheetRow);
-      
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ 
-          status: 'ok', 
-          message: 'Данные записаны в Google Sheets',
-          ip: userIP 
-        })
-      };
-    } catch (sheetError) {
-      console.error('Ошибка записи в Google Sheets:', sheetError);
-      // Всё равно возвращаем успех Tilda, но логируем ошибку
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ 
-          status: 'ok', 
-          warning: 'Данные получены, но не записаны в таблицу',
-          ip: userIP 
-        })
-      };
-    }
-  }
+  // Выводим в лог Netlify (для отладки)
+  console.log('Получена заявка:', JSON.stringify(logEntry));
 
-  // Если Google Sheets не настроен — просто возвращаем успех
+  // 6. Возвращаем ответ Tilda
   return {
     statusCode: 200,
-    body: JSON.stringify({ 
-      status: 'ok', 
-      message: 'Данные получены, IP зафиксирован',
-      ip: userIP,
-      version: version,
-      received_at: receivedAt
-    })
+    body: JSON.stringify(logEntry)
   };
 };
